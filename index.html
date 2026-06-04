@@ -223,16 +223,30 @@ import { getFirestore, doc, setDoc, collection, onSnapshot } from "https://www.g
 /* =========================================
    FIREBASE (ระบบจัดเก็บข้อมูลและตารางคะแนน)
 ========================================= */
-let firebaseConfig = {};
-try { firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {}; } catch (e) {}
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+let app, auth, db;
+let currentUser = null;
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-let currentUser = null;
+try {
+    let firebaseConfig = {};
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+        firebaseConfig = JSON.parse(__firebase_config);
+    }
+    
+    // ตรวจสอบว่ามีคอนฟิกจริงๆ ก่อนเรียกใช้เพื่อป้องกัน Script Error
+    if (Object.keys(firebaseConfig).length > 0) {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+    } else {
+        console.warn("ไม่พบการตั้งค่า Firebase: ระบบจะทำงานในโหมด Offline");
+    }
+} catch (e) { 
+    console.error("Firebase init error:", e); 
+}
 
 const initAuth = async () => {
+    if (!auth) return;
     try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
@@ -243,7 +257,7 @@ const initAuth = async () => {
 };
 
 const setupLeaderboard = () => {
-    if (!currentUser) return;
+    if (!currentUser || !db) return;
     const lbRef = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
     onSnapshot(lbRef, (snapshot) => {
         let data = [];
@@ -255,7 +269,7 @@ const setupLeaderboard = () => {
 };
 
 const syncScoreToCloud = async () => {
-    if (!currentUser || !Store.data.name) return;
+    if (!currentUser || !Store.data.name || !db) return;
     try {
         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'leaderboard', currentUser.uid);
         await setDoc(docRef, {
@@ -267,14 +281,22 @@ const syncScoreToCloud = async () => {
     } catch (error) { console.error("Error syncing score", error); }
 };
 
-initAuth();
-onAuthStateChanged(auth, (user) => {
-    currentUser = user;
-    if (user) {
-        setupLeaderboard();
-        if (Store.data.name) syncScoreToCloud();
-    }
-});
+if (auth) {
+    initAuth();
+    onAuthStateChanged(auth, (user) => {
+        currentUser = user;
+        if (user) {
+            setupLeaderboard();
+            if (Store.data.name) syncScoreToCloud();
+        }
+    });
+} else {
+    // โหมด Offline: อัปเดต UI ให้ทราบว่าไม่สามารถดึงตารางคะแนนออนไลน์ได้
+    setTimeout(() => {
+        const list = document.getElementById('leaderboard-list');
+        if (list) list.innerHTML = '<p style="text-align:center; color:#FF8C00;">เล่นแบบออฟไลน์<br>(ไม่สามารถดูตารางคะแนนออนไลน์ได้)</p>';
+    }, 1000);
+}
 
 /* =========================================
    ข้อมูลด่านและภารกิจ (DATA & MISSIONS)
